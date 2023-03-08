@@ -1,0 +1,1077 @@
+pragma solidity 0.8.7;
+
+contract VMI{
+
+//Entities Adresses
+address public manufacture=0x5B38Da6a701c568545dCfcB03FcB875f56beddC4;
+address public govenrnment=0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db;
+address  public distributer=0xAb8483F64d9C6d1EcF9b849Ae677dD3315835cb2;
+address public  colectoradress=0x78731D3Ca6b7E34aC0F824c42a7cC18A495cabaB;
+address [] public retailoradress;
+address adres_time_contract;
+
+//ماتریس مسافت بین تولید کننده خرده فروش
+uint [] public distance_matrix;
+uint [4] vehicle_capacity=[70,90,100,150];
+uint public number_type_product=4;
+//هزینه ثابت جریمه به ازای هر واحد اختلاف بین محموله دریافتی و ارسالی توزیع کننده
+uint penalty_dif=1000 ;
+//هزینه حمل هر نوع وسیله نقلیه
+uint [] public price_transshipment_array_toman=[8000,9000,11000,15000 ];
+//4 type of vehicle
+uint [4] public price_transshipment_array;
+
+mapping(address=>uint) public balance_map;
+mapping(uint=>vehicle_struct) public vehicle_map;
+mapping(address=>uint) public all_requested_retailors_score;
+//address and register of costumers
+mapping(uint=>address) public costumeresmap;
+mapping(uint=>costumers_struct) public costumers_map;
+mapping(address=>uint[4]) retailor_inv_list_map;
+mapping(address=>uint[4]) retailors_reserved_inventory_map;
+mapping(uint=>uint) prdct_price_map;
+mapping (uint=>mapping(uint=>uint [4])) public all_demand_map;
+//mapping week to retailors_id to sum of product
+mapping (uint=>mapping(uint=>uint[4])) sum_toretailo_map;
+mapping(uint=>uint) cost_shipment_status_map;
+mapping(uint=>cargo_to_retailors_status) public cargo_retailors_status_map;
+mapping(uint=>uint) public cargodestinationmap;
+mapping (uint=>uint [][4]) cargo_barcod_map;
+mapping(uint=>uint[4]) cargo_prdct_number_map;
+//برای رابطه تخصیص وسیله نقلیه به محموله بیام یه مپ بنویسم
+mapping(uint=>uint) assignvehiclemap;
+mapping(uint=>uint[]) diferencemap;
+mapping(uint=>bool) recived_cargo_map;
+mapping(uint=>uint[4])recived_cargo_prdct_num_map;
+//اینو جدید دارم اضافه میکنم
+//هر شماره محموله را به هزینش مپ میکنیم در صورتی هزینه وجود داشته باشد
+mapping (uint=>uint) cargo_cost_map;
+//هر شماره کارگو را به جریمش مپ میکنیم اگر جریمه ای باشد (منظور اینه کلا از جنس جریمه باش)
+mapping (uint=>uint) cargo_penalty_map;
+mapping(address=>bool) Product_delivery_status_map;
+mapping(address=>uint[]) colected_product_retailor;
+
+
+
+enum vehicle_status {send,ready,inrout,free} 
+enum productinuseCustumer{Safe,shouldchange,critical}
+enum order_of_costumer{ordered,reserved,delivered}
+enum status_of_custumer{new_registered,Old}
+enum cargo_to_retailors_status {ready_for_shipment,loading,in_shipment,deliverd_retailors}
+
+struct vehicle_struct{
+    address v_address;
+    uint v_type;//should be from 0 to 3 beacause we have 4 type
+    vehicle_status  v_status;   
+}
+
+struct costumers_struct{
+  uint _costumerid;
+  productinuseCustumer Prdct_status_Custume;
+  order_of_costumer order_status_costumer;
+  status_of_custumer status_costumer;
+  uint product_type;
+  uint product_barcode;
+  uint time_order;//Requested Delivery time
+  uint time_delivered;//Real Delivery time
+  address asigned_retailo;
+  uint asigned_retailor_number;
+  uint delayday_manufacture;
+  bool det_share_re_cu_manu;
+}
+
+
+
+function aaa_first_balance_maping() public{
+    balance_map[manufacture]=10000* 10000000000000000000;
+    balance_map[distributer]=1000* 1000000000000000000;
+    balance_map[govenrnment]=10000* 1000000000000000000;
+     balance_map[colectoradress]=address(colectoradress).balance;
+}
+
+//function  aaaa_modify_balancemap(address _Adrs,uint x_lot) public {
+  ///       balance_map[_Adrs]=x_lot;
+//}
+//true//
+
+//adreses of collector
+ //function aaaaa_push_colector_adress(address colectradrs) onlymanufacture public{
+     //colectoradress.push(colectradrs);
+    //balance_map[colectradrs]=address(colectradrs).balance;
+     //colectoradress.push(0x78731D3Ca6b7E34aC0F824c42a7cC18A495cabaB);
+   //  colectoradress.push(colectradrs);
+   // balance_map[colectradrs]=address(colectradrs).balance;
+ //}
+
+function aaaab_vehicle_map(uint vehicle_id,address vehicle_adress,uint v_type)
+public onlydistributer returns(string memory){
+require(v_type<=3);
+ vehicle_map[vehicle_id]. v_address=vehicle_adress;
+ vehicle_map[vehicle_id].v_type=v_type;
+ vehicle_map[vehicle_id].v_status=vehicle_status.free;
+ return "Vehicle is registered";
+}
+  
+
+function b_calculate_score(uint physical_facility,
+uint validation,uint potential_costumer,address ret_adrs) 
+onlymanufacture public  returns(uint){
+//تمام امتیازات از صد وارد میشود
+   uint score;
+   score=((physical_facility+validation+potential_costumer)*100/300);
+   all_requested_retailors_score[ret_adrs]=score;
+   return score;
+ }
+
+
+ function bb_push_retailor_address_distance(address re_adrs,
+ uint distance,uint [] memory _inventorylist)onlymanufacture public returns(uint){
+     require(all_requested_retailors_score[re_adrs]>50);
+        retailoradress.push(re_adrs);
+        distance_matrix.push(distance);
+         balance_map[re_adrs]=address(re_adrs).balance;
+         for (uint i=0; i<number_type_product; i++){
+         retailor_inv_list_map[re_adrs][i]=_inventorylist[i];
+    }
+    uint id_of_retailors;
+    for (uint j=0; j<number_type_product; j++){
+                retailors_reserved_inventory_map[re_adrs][j]=0;
+        }
+        return id_of_retailors=retailoradress.length-1;
+}
+
+
+
+uint32 cus_id=1
+;
+//Each Costumer must register in contract
+function bb_register_customer(address _cusadrs,bool _isnew,bool custumer_sign) public
+ returns( string memory msgto)  {
+require(custumer_sign=true);
+   if (_isnew==true){
+     costumeresmap[cus_id]=_cusadrs;
+     costumers_map[cus_id]._costumerid=cus_id;
+     costumers_map[cus_id].status_costumer=status_of_custumer.new_registered;
+     balance_map[_cusadrs]=address(_cusadrs).balance; 
+     cus_id=cus_id+1;
+     return "Registration Is Done";
+}
+}
+
+function c_product_price_map(uint _ptype,uint _price) public  onlymanufacture
+ returns(uint) {
+   //insert price in doller
+   uint p=(_price* 1000000000000000000/1600); 
+   return prdct_price_map[_ptype]=p ;
+}
+
+function cb_price_transship_in_wei() public{
+   for(uint i=0;i<price_transshipment_array_toman.length;i++){
+           uint a=(price_transshipment_array_toman[i]*1000000000000000000)/1600;
+          price_transshipment_array[i]=a;
+   }
+}
+
+
+//writing modifires
+
+modifier  onlymanufacture(){ //only manufacture can do it
+        require(manufacture == msg.sender); 
+        _;
+    }
+modifier  onlydistributer(){ //only manufacture can do it
+        require( msg.sender==distributer); 
+        _;
+    }
+modifier  onlyretailors(uint retailorid) { //only retailor can do it
+   require(msg.sender==retailoradress[retailorid]);
+_;
+}
+modifier  onlycollector() { //only collector can do it
+   require(msg.sender==colectoradress);
+_;}
+modifier  onlycostumers(uint id) { //only retailor can do it
+    require(msg.sender==costumeresmap[id]);
+       _;    
+}
+
+
+//events
+//در این قسمت ایونت ها رو مینویسم 
+//تمام ایونتا رو مذارم ببینم کدوما به دردم میخوره بعد اضافه میکنم
+event cargoReadyforshipment(address manufacturer, uint[4] product_num,uint typvehicle);
+event vehile_send_forshipment(address vicle_adress,uint vehicle_id);
+event location_continer(string msg);
+//وضعیت محموله آماده جهت ارسال به خرده فروش
+
+
+//event product_costumer_status(productinuseCustumer Prdct_status_Custume);
+
+
+// هر کاگو دارای یک شماره منحصر به فرد است که داخل آن شماره بارکد محصولات است
+
+
+
+
+//****
+//string [] cargo_status;
+
+
+// writing main function 
+
+
+
+function cbb_orders_ret_week(uint [4] memory product_demand, uint _ret_id, uint week_num )
+ public onlymanufacture {
+   for(uint i=0;i<4;i++){
+       all_demand_map[week_num][_ret_id][i]=product_demand[i];
+       if(retailor_inv_list_map[retailoradress[_ret_id]][i]-
+       all_demand_map[week_num][_ret_id][i]>0)/* 0is rop*/{
+         sum_toretailo_map[week_num][_ret_id][i]=0;}
+         else{
+           sum_toretailo_map[week_num][_ret_id][i]=
+           all_demand_map[week_num][_ret_id][i]-
+           retailor_inv_list_map[retailoradress[_ret_id]][i];
+         }
+    }  
+}
+
+
+
+function cc_request_Container(uint [4] memory product_num,uint _vehicletype, uint ret_des,
+uint cargo_num/*,uint week_num*/) public onlymanufacture {
+  //require(sum_toretailo_map[week_num][ret_des][0]<=barcodes_1.length
+  //&&sum_toretailo_map[week_num][ret_des][1]<=barcodes_2.length&&
+  //sum_toretailo_map[week_num][ret_des][2]<=barcodes_3.length&&
+  //sum_toretailo_map[week_num][ret_des][3]<=barcodes_4.length);
+  //require(barcodes_1.length+barcodes_2.length+
+  //barcodes_3.length+barcodes_4.length<=vehicle_capacity[_vehicletype]);
+  //  cargo_barcod_map[cargo_num][0]=barcodes_1;
+  //  cargo_barcod_map[cargo_num][1]=barcodes_2;
+  //  cargo_barcod_map[cargo_num][2]=barcodes_3;
+  //  cargo_barcod_map[cargo_num][3]=barcodes_4;
+  for (uint i=0;i<4;i++){
+     cargo_prdct_number_map[cargo_num][i]=product_num[i];
+  }
+    uint vtype=_vehicletype;
+    cargodestinationmap[cargo_num]=ret_des;    
+    cargo_retailors_status_map[cargo_num]=cargo_to_retailors_status.ready_for_shipment;
+    cost_shipment_status_map[cargo_num]=0;
+    emit cargoReadyforshipment(msg.sender,cargo_prdct_number_map[cargo_num],vtype);
+}
+
+
+
+// تابع تخصیص وسیله نقلیه جهت حمل 
+function ccc_assign_vehicle(uint vehicleid,uint cargo_num) onlydistributer public  returns(address) {
+ require(vehicle_map[vehicleid].v_status==vehicle_status.free);
+  uint sum_cargo=0;
+ for(uint i=0;i<4;i++){
+         sum_cargo=cargo_prdct_number_map[cargo_num][i]+ sum_cargo;
+ }
+ require(sum_cargo<=vehicle_capacity[vehicle_map[vehicleid].v_type]);
+  emit vehile_send_forshipment(vehicle_map[vehicleid].v_address,vehicleid);
+  //اینجا اومدم مشخص کردم محموله با کدوم وسیله نقلیه ارسال شده
+  assignvehiclemap[cargo_num]=vehicleid;
+  vehicle_map[vehicleid].v_status=vehicle_status.send;
+  return vehicle_map[vehicleid].v_address;
+}
+
+
+//ورود وسیله نقیله به تولید کننده جهت بارگیری
+function cccc_vehicle_ready(uint vehicleid) onlymanufacture public{
+    vehicle_map[vehicleid].v_status=vehicle_status.ready;
+    emit location_continer("Ready for Loading");
+}
+
+//پس از پایان بارگیری و شروع عملیات حمل موقعیت نیز توسط تولید کننده به روز میشود
+function d_start_shipment(uint vehicleid,uint cargo_num) public  {
+    require(assignvehiclemap[cargo_num]==vehicleid) ;
+        require(cargo_retailors_status_map[cargo_num] ==
+         cargo_to_retailors_status.ready_for_shipment);
+        require(vehicle_map[vehicleid].v_status==vehicle_status.ready);
+        cargo_retailors_status_map[cargo_num]=cargo_to_retailors_status.loading;             
+    }
+
+
+
+//وضعیت وسیله نقلیه در حال حمل نیز  از طریق زیر قابل به روز رسانی است
+function dd_vehicle_in_shipment(uint cargo_num,string memory vehicle_location) public{
+    uint vehicleid=assignvehiclemap[cargo_num];
+    require(cargo_retailors_status_map[cargo_num]==cargo_to_retailors_status.loading);
+    vehicle_map[vehicleid].v_status=vehicle_status.inrout;
+    cargo_retailors_status_map[cargo_num]=cargo_to_retailors_status.in_shipment; 
+    emit location_continer(vehicle_location);
+}
+
+//وضعیت حامل و محموله پس از تحویل
+function ddd_vehicle_in_destination(uint vehicleid,uint cargo_num,uint id_ret) public
+ onlyretailors(id_ret) {
+require(cargo_retailors_status_map[cargo_num]==cargo_to_retailors_status.in_shipment);
+require( vehicle_map[vehicleid].v_status==vehicle_status.inrout);
+vehicle_map[vehicleid].v_status=vehicle_status.free;
+emit location_continer("in destination");
+cargo_retailors_status_map[cargo_num]=cargo_to_retailors_status.deliverd_retailors;
+}
+
+
+function dddd_check_cargo_Retailors(uint cargo_num,uint [] memory barcodes_dif,
+uint retailorid,uint [4] memory Product_type_num) onlyretailors(retailorid) 
+  public returns(bool){
+require(cargodestinationmap[cargo_num]==retailorid); 
+ //update inventory position  
+ for(uint i=0;i<number_type_product;i++){
+         recived_cargo_prdct_num_map[cargo_num][i]=Product_type_num[i];
+         retailor_inv_list_map[msg.sender][i]=Product_type_num[i]+
+         retailor_inv_list_map[msg.sender][i];
+ }
+ // specify diference
+  diferencemap[cargo_num]=barcodes_dif;
+  if(cargo_prdct_number_map[cargo_num][0]==Product_type_num[0]&&
+  cargo_prdct_number_map[cargo_num][1]==Product_type_num[1]&&
+  cargo_prdct_number_map[cargo_num][2]==Product_type_num[2]&&
+  cargo_prdct_number_map[cargo_num][3]==Product_type_num[3]){
+          return recived_cargo_map[cargo_num]=true;
+  }
+   else{
+        return recived_cargo_map[cargo_num]=false;
+   } 
+}
+
+
+//پرداخت هزینه حمل به توزیع کننده
+//function show(uint vehicle_id) public view returns(uint){
+   //uint a=vehicle_map[vehicle_id].v_type;
+  //return a;
+        //return price_transshipment_array[a];
+//}
+//function show2(uint cargo_num) public view returns(uint){
+//     return distance_matrix[cargodestinationmap[cargo_num]];   
+//}
+
+
+
+
+
+function e_pay_transshipment_cost(uint cargo_num,uint vehicle_id) public payable
+ onlymanufacture  {
+  if(cost_shipment_status_map[cargo_num]==0){
+     uint cost_shipment=price_transshipment_array[vehicle_map[vehicle_id].v_type]*
+     distance_matrix[cargodestinationmap[cargo_num]];
+   if (recived_cargo_map[cargo_num]==true){
+        cargo_cost_map[cargo_num]=cost_shipment;
+        require(balance_map[manufacture]>cargo_cost_map[cargo_num]);
+        //پرداخت هزینه حمل
+        balance_map[manufacture]=balance_map[manufacture]-cargo_cost_map[cargo_num];
+        balance_map[distributer]=balance_map[distributer]+cargo_cost_map[cargo_num];
+        cost_shipment_status_map[cargo_num]=1;  
+    } 
+    else{
+     uint dif_num=0;
+     for (uint i=0;i<4;i++){
+         if(cargo_prdct_number_map[cargo_num][i]-recived_cargo_prdct_num_map[cargo_num][i]>0){
+           dif_num=cargo_prdct_number_map[cargo_num][i]-recived_cargo_prdct_num_map[cargo_num][i]+
+           dif_num;
+         }    
+     }
+      uint penalty_diference=dif_num*penalty_dif;
+      if(cost_shipment>penalty_diference){
+        cargo_cost_map[cargo_num]=cost_shipment-penalty_diference;
+        require(balance_map[manufacture]>cargo_cost_map[cargo_num]);
+        balance_map[manufacture]=balance_map[manufacture]-cargo_cost_map[cargo_num];
+        balance_map[distributer]=balance_map[distributer]+cargo_cost_map[cargo_num];
+        cost_shipment_status_map[cargo_num]=1; 
+      }
+      else if(cost_shipment<penalty_diference){
+        cargo_penalty_map[cargo_num]=penalty_diference-cost_shipment;
+        require(balance_map[distributer]>cargo_penalty_map[cargo_num]);
+        balance_map[manufacture]=balance_map[manufacture]+ cargo_penalty_map[cargo_num];
+        balance_map[distributer]=balance_map[distributer]- cargo_penalty_map[cargo_num];
+        cost_shipment_status_map[cargo_num]=2;
+      }
+      else if(cost_shipment==penalty_diference){
+          cost_shipment_status_map[cargo_num]=1;
+    }
+  }
+}
+}
+//////////////////////ا//این بخش مابین رو به نظرم خوب نیست و به شکل بالانس مدیریت میکنم حسابها رو 
+//event log(uint gas);
+//fallback() external payable {
+//emit log(gasleft());
+///}
+//بیام از موجودی همه بریزم تو قرارداد خیلی کار  بدیه نکنم بهتره پس فقط مینویسمش  
+//function contractbalance() public payable {
+   //  payable(address(this)).transfer(msg.value);
+//}
+
+//function pay_transshipmentcost(uint cargo_num) public payable{
+ //  require(cost_shipment_status_map[cargo_num]==0);
+ // require(cargo_cost_map[cargo_num]>0);
+ //   payable(distributer).transfer(cargo_cost_map[cargo_num]);
+//}
+
+/////////////////////////////////////
+
+////تابع پرداخت را مجزا میکنم 
+
+
+
+//سفارش گذاری مشتری برای خرده فروش
+//هر زمان که محصول در حال مصرف در وضعیت باید تعویض شود قرار گیرد
+//باید به مشتری اعلام گردد که نقطه تعویض است 
+ //این در حالتی است که مشتری جز مشتریان قدیمی است
+
+function ee_costumer_old_order(bool confirmation_result,uint id) onlycostumers(id) 
+public payable{
+   address custumer_adress=costumeresmap[id];
+   productinuseCustumer product_status;
+  product_status=costumers_map[id].Prdct_status_Custume;
+   require (product_status==productinuseCustumer.shouldchange||
+   product_status==productinuseCustumer.critical);
+     require(confirmation_result=true);
+       uint p_type=costumers_map[id].product_type;  
+         if(balance_map[custumer_adress]>=prdct_price_map[p_type]){
+            balance_map[custumer_adress]=balance_map[custumer_adress]- 
+            prdct_price_map[p_type];
+            balance_map[manufacture]=balance_map[manufacture]+
+             prdct_price_map[p_type];
+            costumers_map[id].order_status_costumer=order_of_costumer.ordered;
+            costumers_map[id].det_share_re_cu_manu=false;
+          }
+   }
+
+
+
+function eee_costumer_new_order(bool confirmation_result,
+uint id,uint p_type) onlycostumers(id) public payable{
+//باید وضعیت مشتری در حالت جدید ثبت نام کرده باشد و همینطور نوع محصول را مشخص 
+//کند
+   address custumer_adress=costumeresmap[id];
+   status_of_custumer  cu_status;
+   cu_status=costumers_map[id].status_costumer;
+   require(cu_status==status_of_custumer.new_registered);
+   require(confirmation_result=true);
+//برخلاف حالت قبل اینجا نوع محصول توسط مشتری مشخص میشود در اولین خرید
+        costumers_map[id].product_type=p_type;  
+       //ابتدا باید موجودی حساب مشتری از قیمت محصول بیشتر باشد و در صورت بیشتر بودن 
+       //عملیات پرداخت انجام و مشخصات سفارش ثبت میشود
+       //در این حالت نوع محصول هم باید بصورت ورودی تعیین شود
+         if(balance_map[custumer_adress]>=prdct_price_map[p_type]){
+            balance_map[custumer_adress]=balance_map[custumer_adress]- prdct_price_map[p_type];
+            balance_map[manufacture]=balance_map[manufacture]+ prdct_price_map[p_type];
+           //پس از کسر هزینه، سفارش مشتری در وضعیت سفار داده شده قرار میگیرد
+           costumers_map[id].order_status_costumer=order_of_costumer.ordered;
+           costumers_map[id].det_share_re_cu_manu=false;
+          }
+  }
+
+//تعیین زمان سفارشدهی و زمان تحویل  
+
+function ef_insert_adrestime(address cntrct_adr) public onlymanufacture {
+        adres_time_contract=cntrct_adr;
+}
+
+//تعیین زمان تحویل سفارش توسط مشتری از طریق ورود داده های زیر و تبدیل کردن 
+//این زمان به تایم استمپ
+function f_call_toTimestamp_order(uint id,uint16 year, uint8 month, uint8 day,
+ uint8 hour, uint8 minute, uint8 second) public returns(uint) {
+    
+ //باید ابتدا بررسی شود که ایدی متعلق به مشتری است
+ require(costumeresmap[id]==msg.sender);
+     //باید سفارش در وضعیت سفارش داده شده باشد
+     require(costumers_map[id].order_status_costumer==order_of_costumer.ordered);
+      DateTime b=DateTime(adres_time_contract);
+      costumers_map[id].time_order=b.toTimestamp(year,month,day,hour,minute,second);
+      return costumers_map[id].time_order;
+}
+
+function fb_assigning_customer_to_retailer(uint id_cus,uint [] memory cust_dis)public returns(uint)
+ /*onlycostumers(id_cus)*/ {
+  uint  asigned_ret_num;
+  uint mindis=200;
+  for(uint i=0;i<retailoradress.length;i++){
+    if (cust_dis[i]<=mindis){    
+      asigned_ret_num=i;
+      mindis=cust_dis[i];
+            }
+  }  
+ costumers_map[id_cus].asigned_retailor_number= asigned_ret_num;    
+  return  asigned_ret_num;
+}
+
+
+//function call_toTimestamp_deliverd(uint16 year, uint8 month, uint8 day, uint8 hour, uint8 minute, uint8 second) public  returns (uint) {
+// DateTime c=DateTime(adres_time_contract);
+// return times_tamp2=c.toTimestamp(year,month,day,hour,minute,second);
+//}
+
+
+//محاسبه زمان و تاخیرات
+
+
+
+//تحویل محصول به مشتری توسط خرده فروش
+//باید تخصیص خرده فروش به مشتری انجام شود 
+//باید زمان تحویل هم برای مشتری ثبت شود تا تاخیر مشخص شود
+
+
+//محاسبه و پرداخت به خرده فروش
+//هم باید در نظر بگیریم اگر تاخیری بوده در تحویل به مشتری از سمت کی بوده 
+//اگر از سمت خرده فروش بوده باید جریمه رو از خرده فروش بگیریم 
+//اگر هم تاخیر در تحویل محصول به دلیل این بوده که موجودی اون خرده فروش
+//در  مورد محصول درخواستی تامین نبوده جریمه مال تولید کننده است
+//یک سری متغیر استیت داریم یکی میزان موجودی هر خرده فروش
+//یکی درصد پرداخت شده از قیمت به خرده فروش که در واقع سود خرده فروش
+
+
+
+//ّبرسی و بلوکه کردن موجودی برای مشتری که سفارش خود را تایید کرده  است
+function ff_reserve_inv_for_customer(uint id_cus)  public onlycostumers(id_cus){
+    uint prdct_type=costumers_map[id_cus].product_type;
+    costumers_map[id_cus].asigned_retailo=retailoradress[costumers_map[id_cus].asigned_retailor_number];
+    address _asigned_retailor=costumers_map[id_cus].asigned_retailo;
+
+//در صورتی وضعیت سفارش مشتری در حالت سفارش داده شده باشد
+  if (costumers_map[id_cus].order_status_costumer==order_of_costumer.ordered){
+      //در صورتی که میزان موجودی برای خرده فروش تخصیص داده شده مثبت باشد 
+      //موجودی رزرو شده و از موجودی در دسترس خرده فروش خارج  میشود
+          if (retailor_inv_list_map[ _asigned_retailor][prdct_type-1]>=1){
+                  retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]=
+                  retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]+1;
+                  retailor_inv_list_map[ _asigned_retailor][prdct_type-1]=
+                  retailor_inv_list_map[ _asigned_retailor][prdct_type-1]-1;
+                  //وضعیت برای مشتری نیز به رزرو شده تغییر میابد
+                  costumers_map[id_cus].order_status_costumer=order_of_costumer.reserved;
+          }
+          //در صورتی که میزان موجودی در دسترس برای خرده فروش کم باشد
+          else if(retailor_inv_list_map[ _asigned_retailor][prdct_type-1]<1&&
+          block.timestamp<costumers_map[id_cus].time_order){
+                  uint checktime=block.timestamp;
+                  //از روز بعد شروع به چک کردن موجودی میکند
+                  checktime=checktime+86400;
+                  //در صورتی که زمان سفارشدهی مشتری از زمان حال کمتر باشد
+                  while (checktime<costumers_map[id_cus].time_order){    
+                          //چنانچه میزان موجودی مثبت شده باشد به مشتری تخصیص میباد
+                          if  (retailor_inv_list_map[ _asigned_retailor][prdct_type-1]>=1){
+                              retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]=
+                              retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]+1;
+                              retailor_inv_list_map[ _asigned_retailor][prdct_type-1]=
+                                retailor_inv_list_map[ _asigned_retailor][prdct_type-1]-1;
+                              costumers_map[id_cus].order_status_costumer=order_of_costumer.reserved;
+
+                              costumers_map[id_cus].delayday_manufacture=0;
+    
+                            //  در صورت تخصیص موجودی از حلقه وایل خارج میشود
+                            //و مشتری دچار کمبود نمیشود و کسی متحمل هزینه کمبود نیست
+                            break;
+                           } 
+                           else {
+                               checktime=checktime+86400;
+                           }
+                      }
+                    }
+                }
+            //در صورتی که موجودی نباشد و زمان از زمان تعیین شده مشتری فراتر رود
+            // دراینصورت مشتری با کمبود موجه میشود و این هزینه کمبود مربوط
+            //به تولید کننده است 
+            // در این حالت هم باید بنویسم تا زمانی که
+            // موجودی دریافت شود و به مشتری تخصیص داده شود
+            else if(retailor_inv_list_map[ _asigned_retailor][prdct_type-1]<1
+            &&block.timestamp>costumers_map[id_cus].time_order){
+                uint checktime=block.timestamp;
+                checktime=checktime+86400;
+                bool continu=true;
+                while (continu==true) {
+                        if  (retailor_inv_list_map[ _asigned_retailor][prdct_type-1]>=1){
+                            retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]=
+                           retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]+1;
+                              retailor_inv_list_map[ _asigned_retailor][prdct_type-1]-1;
+                               costumers_map[id_cus].order_status_costumer=
+                               order_of_costumer.reserved;
+                               costumers_map[id_cus].delayday_manufacture=
+                               block.timestamp-costumers_map[id_cus].time_order;
+                               
+                            //  در صورت تخصیص موجودی از حلقه وایل خارج میشود
+                            break;
+                       }
+                       else{
+                            checktime=checktime+86400;
+                       }
+
+                
+            }
+     }
+  }
+
+ 
+//موجودی برای مشتری بلوکه میشود  و بعد از بلوکه شدن باید به مشتری تحویل داده شود
+//و زمان تحویل نیز مشخص شود تا بتوان تاخیرات را حساب کرد
+
+//دستور تحویل که باید از سمت سیستم متمرکز به خرده فروش داده شود
+
+function g_build_map_Product_delivery(uint id_cus,bool deliver_order) public onlymanufacture {
+  address custumer_adress=costumeresmap[id_cus];
+     require(costumers_map[id_cus].order_status_costumer==order_of_costumer.reserved);
+      Product_delivery_status_map[custumer_adress]=deliver_order;
+}
+
+
+//یک ارایه بسازم و توش لیست محصولات مصرف شده که از مشتری توسط 
+//خرده فروش جمع میشن را وارد کنم
+function gg_delivery_customer(uint re_id,uint id_cus,uint barcode_delivered_product)
+onlyretailors(re_id) public returns(uint) {
+address _asigned_retailor=retailoradress[re_id];
+address custumer_adress=costumeresmap[id_cus];
+uint prdct_type=costumers_map[id_cus].product_type;
+  //بررسی درست بودن تحویل توسط خرده فروش تخصیص یافته
+  require(msg.sender==costumers_map[id_cus].asigned_retailo);
+  //باید دستور تحویل صادر شده باشد
+  require(Product_delivery_status_map[custumer_adress]==true);
+  //باید موجودی رزرو شده باشد
+   costumers_map[id_cus].time_delivered=block.timestamp;
+   if (costumers_map[id_cus].product_barcode==0){
+           //در این حالت مشتری محصول از قبل جهت تحویل ندارد
+      costumers_map[id_cus].product_barcode=barcode_delivered_product;
+       costumers_map[id_cus].Prdct_status_Custume=productinuseCustumer.Safe;
+
+      }
+      else{
+              //محصول استفاده شده تحویل گرفته شده و جدید تخویل میشه و اطلاعات مشتری به روز میشود
+              colected_product_retailor[msg.sender].push(costumers_map[id_cus].
+              product_barcode);
+              costumers_map[id_cus].product_barcode=barcode_delivered_product;
+             costumers_map[id_cus].Prdct_status_Custume=productinuseCustumer.Safe;
+
+      }
+     //باید از لیست موجودی رزرو شده نیز کم شود
+     retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]=
+     retailors_reserved_inventory_map[_asigned_retailor][prdct_type-1]-1;
+     return costumers_map[id_cus].time_delivered;
+
+}
+
+
+
+//reading function for interaction 
+function hh_read_asginedretailor(uint cu_id) public view returns(address){
+       return costumers_map[cu_id].asigned_retailo;
+}
+
+function hh_read_product(uint cu_id) public view returns(uint){
+       return costumers_map[cu_id].product_type;
+}
+
+
+function hh_read_det_share_re_cu(uint cu_id) public view returns(bool){
+       return costumers_map[cu_id].det_share_re_cu_manu;
+}
+
+function hh_read_time(uint cu_id) public view returns(uint){
+   uint a=costumers_map[cu_id].time_order;
+   uint b=costumers_map[cu_id].time_delivered;
+   return b-a;
+}
+
+function hh_delayday_manufacture(uint cu_id) public view returns(uint){
+   return costumers_map[cu_id].delayday_manufacture;
+}
+
+function read_price_map(uint productType)  public view returns(uint){
+        return prdct_price_map[productType];
+}
+
+function read_balancemap(address adrs) public view returns(uint){
+        return balance_map[adrs];
+}
+
+function updateadd_balance_map(address _adrs,uint plus) public {
+               balance_map[_adrs]=balance_map[_adrs]+plus;
+}
+function updatesub_balance_map(address _adrs,uint sub) public {
+               balance_map[_adrs]=balance_map[_adrs]-sub;
+}
+function update_det_share_re_cu(uint cu_id) public {
+        costumers_map[cu_id].det_share_re_cu_manu=true;
+}
+
+function read_colected_product_retailor(address re_adrs) public view returns(uint[] memory ){
+     return colected_product_retailor[re_adrs];
+   
+}
+
+function u_delete_colected_retailor(uint re_id )  public {
+ address re_adrs=retailoradress[re_id];
+        delete colected_product_retailor[re_adrs]; 
+}
+
+}
+
+/*contract cost{
+VMI_supplychain_sustainable public vmi;
+
+    constructor(VMI_supplychain_sustainable _adress_vmi) {
+        vmi = _adress_vmi;
+    }
+
+function adin(address adr,uint z) public{
+    vmi.aaaa_modify_balancemap(adr,z);    
+}*/
+
+
+
+
+
+
+
+
+
+// modifiers
+/*modifier  onlymanufacture(address contract_vmi){ //only manufacture can do it
+        require(vmi.manufacture()== msg.sender); 
+        _;
+    }
+
+
+}*/
+
+
+
+
+
+
+///////////////////////////////////////////////////////////////
+contract Sustainable_and_pay{
+
+//میزان جریمه به ازای هر واحد تایم استمپ
+uint penalty_cost=1 ;// جریمه به ازای هر ساعت تاخیر باشد 
+//تعریف درصد سهم خرده فروش از فروش هر واحد محصول
+uint percent_of_retailor=20;
+
+//قسمت مربوط به مراکز جمع آوری و دولت
+mapping(address=>uint []) collected_product_map;
+mapping(address=>uint []) collected_product_map_pay_status;
+mapping(address=>uint []) collected_product_map_pa_government;
+mapping(uint=>uint []) difrence_barcode_map;
+uint cost_of_one_colected=200 wei;
+address public govenrnment=0x4B20993Bc481177ec7E8f571ceCaE8A9e22C02db;
+address public manufacture=0x5B38Da6a701c568545dCfcB03FcB875f56beddC4;
+address public  colectoradress=0x78731D3Ca6b7E34aC0F824c42a7cC18A495cabaB;
+
+
+uint i_of_difrence_barcode_map=0; 
+uint Last_number_paid=0;
+
+VMI public vmi;
+
+    constructor(VMI _adress_vmi) {
+        vmi = _adress_vmi;
+    }
+
+
+//تعیین سهم خرده فروش
+//محاسبه و پرداخت سهم خرده فروش
+function a_calculate_cost(uint cu_id) onlymanufacture public payable {
+
+ address custumer_adress=vmi.costumeresmap(cu_id);
+
+ address asigned_retail= vmi.hh_read_asginedretailor(cu_id);
+
+ uint productType=vmi.hh_read_product(cu_id);
+ require(vmi.hh_read_det_share_re_cu(cu_id)==false);
+
+ //اول حساب میکنیم بین زمان تحویل داده شده و زمان تعیین شده مشتری چقدر تقاوته
+  //uint a=costumers_map[cu_id].time_order-costumers_map[cu_id].time_delivered;
+uint a=vmi.hh_read_time(cu_id);
+
+ //uint b=costumers_map[cu_id].delayday_manufacture;
+ uint b=vmi.hh_delayday_manufacture(cu_id);
+ uint mohlat_tahvil_yekrooze=24*60*60;
+ //میزان تاخیر مربوط به خرده فروش
+ uint c=a-b-mohlat_tahvil_yekrooze;
+ uint dp=b+mohlat_tahvil_yekrooze;
+ //میزان تاخیر مربوط به تولید کننده
+ 
+//اگر فرض کنم که خرده فروش به دللی کمبود به مشتری تحویل نداده تا زمانی که موجودیش تأمین شده 
+// در اینصورت برای محاسبه تاخیر در تحویل به مدت  یک روز از زمان دریافت تا تحویل به
+//مشتری فرصت دارد و اگر ازاین زمان بیشتر بشه اون هم متحمل هزینه جریمه تحویل میشه 
+  
+  //اگر تاخیر از سمت خرده فروش باشد
+  //برای زمان تحویل یک بازه چندساعته در نظر بگیرم که این زمان 
+  //تحویل را بتونیم شناور در نظر بگیریم من فرض میکنم که زمان شناور دو ساعت باشد
+  if (a>2*60*60&&b==0) {
+    uint penalty=((a-2*60*60))*penalty_cost;
+    uint pay_toretailor;
+     //محاسبه میزان پرداختی به خرده فروش بر اساس درصد تعیین شده منهای جریمه
+     //pay_toretailor=((product_price_map[productType]*percent_of_retailor)/100)-penalty;
+     pay_toretailor=((vmi.read_price_map( productType))*percent_of_retailor/100)-penalty;
+     //پرداخت به خرده فروش
+      // if(((product_price_map[productType]*percent_of_retailor)/100)-penalty>0){
+     if (((vmi.read_price_map( productType))*percent_of_retailor/100)-penalty>0){
+        //require(balance_map[manufacture]>=penalty);
+       require(vmi.read_balancemap(vmi.manufacture())>=penalty);
+       //require(balance_map[manufacture]>=pay_toretailor);
+        require(vmi.read_balancemap(vmi.manufacture())>=pay_toretailor);
+
+
+//function updatesub_balance_map(address _adrs,uint sub) public {
+          //     balance_map[_adrs]=balance_map[_adrs]-sub;
+
+       //balance_map[asigned_retail]=balance_map[asigned_retail]+ pay_toretailor;
+       vmi.updateadd_balance_map(asigned_retail,pay_toretailor);
+      // balance_map[custumer_adress]=balance_map[custumer_adress]+ penalty;
+       vmi.updateadd_balance_map(custumer_adress,penalty);
+       //balance_map[manufacture]=balance_map[manufacture]- pay_toretailor- penalty;
+       vmi.updatesub_balance_map(vmi.manufacture(),penalty+pay_toretailor);
+       //costumers_map[cu_id].det_share_re_cu_manu=true;
+       vmi.update_det_share_re_cu(cu_id);
+        }
+
+        //else if(penalty-((product_price_map[productType]*percent_of_retailor)/100)>0)
+        else if(penalty-((vmi.read_price_map( productType)*percent_of_retailor)/100)>0){  
+           //require(balance_map[asigned_retail]>=penalty-((product_price_map[productType]*percent_of_retailor)/100));
+           require(vmi.read_balancemap(asigned_retail)>=penalty-((vmi.read_price_map( productType)*percent_of_retailor)/100));
+           //balance_map[asigned_retail]=balance_map[asigned_retail]-
+            //((vmi.read_price_map( productType)*percent_of_retailor)/100);
+            vmi.updatesub_balance_map(asigned_retail,((vmi.read_price_map( productType)*percent_of_retailor)/100));
+            //balance_map[custumer_adress]=balance_map[asigned_retail]+
+            //((product_price_map[productType]*percent_of_retailor)/100);
+        vmi.updateadd_balance_map(custumer_adress,((vmi.read_price_map( productType)*percent_of_retailor)/100));
+        }
+        
+  // اگر تاخیر از سمت تولید کننده باشد
+  else if (b>0&&(c<=0)){
+     uint _penalty=((a-2*60*60)/(60*60))*penalty_cost;
+     uint _pay_toretailor;
+     //محاسبه میزان پرداختی به خرده فروش بر اساس درصد تعیین شده 
+     //pay_toretailor=((product_price_map[productType]*percent_of_retailor)/100);
+     pay_toretailor=((vmi.read_price_map( productType)*percent_of_retailor)/100);     
+     //پرداخت به خرده فروش
+     //require(balance_map[manufacture]>=penalty+pay_toretailor);
+     require( vmi.read_balancemap(vmi.manufacture())>=penalty+_pay_toretailor);
+       //balance_map[asigned_retail]=balance_map[asigned_retail]+ pay_toretailor;
+        vmi.updateadd_balance_map(asigned_retail,_pay_toretailor);
+      // balance_map[custumer_adress]=balance_map[custumer_adress]+ penalty;
+        vmi.updateadd_balance_map(custumer_adress,_penalty);
+       //balance_map[manufacture]=balance_map[manufacture]- pay_toretailor- penalty;
+        //balance_map[manufacture]=balance_map[manufacture]- pay_toretailor- penalty;
+         vmi.updatesub_balance_map(vmi.manufacture(),pay_toretailor+_penalty);
+
+
+  }
+  //اگر تاخیر از هر دو طرف باشد هم تولید کننده هم خرده فروش
+  else if (b>0&&(c>2*60*60)){
+      //سهم جریمه خرده فروش
+    uint penalty1=((c-2*60*60)/(60*60))*penalty_cost;
+    //سهم جریمه تولید کننده
+    uint penalty2=((dp-2*60*60)/(60*60))*penalty_cost;
+    uint _pay_toretailor;
+     //محاسبه میزان پرداختی به خرده فروش بر اساس درصد تعیین شده 
+     pay_toretailor=((vmi.read_price_map( productType)*percent_of_retailor)/100);
+     //پرداخت به خرده فروش
+     //require(balance_map[manufacture]>=penalty1+penalty2+pay_toretailor);
+     require(vmi.read_balancemap(vmi.manufacture())>=penalty1+penalty2+_pay_toretailor);
+       //balance_map[asigned_retail]=balance_map[asigned_retail]+ pay_toretailor-penalty1;
+        vmi.updateadd_balance_map(asigned_retail,_pay_toretailor);
+        vmi.updatesub_balance_map(asigned_retail,penalty1);
+
+       //balance_map[custumer_adress]=balance_map[custumer_adress]+ penalty1+penalty2;
+        vmi.updateadd_balance_map(custumer_adress,penalty1+penalty2);
+
+       //balance_map[manufacture]=balance_map[manufacture]- pay_toretailor- penalty1-penalty2;
+        vmi.updatesub_balance_map(vmi.manufacture(),_pay_toretailor+ penalty1+penalty2);
+
+  }
+
+ }
+}
+
+//[1140112100,1140112101,1140112102,3140112300,3140112301,3140112302,3140112303,3140112304,1140112103,1140112104,1140112105,3140112316,3140112317,3140112317,3140112317,3140112317,3140112317,3140112317,1140112106,1140112107,1140112108,1140112109,1140112111,1140112110,1140112112,1140112113,1140113123,2140112217,2140112209,2140112210]
+function h_collection_used(uint re_id) public onlycollector {
+        address re_adrs=vmi.retailoradress(re_id);
+        uint [] memory barcode_used=vmi.read_colected_product_retailor(re_adrs);
+        collected_product_map[msg.sender]=barcode_used;
+        collected_product_map_pay_status[msg.sender]=barcode_used;
+        collected_product_map_pa_government[msg.sender]=barcode_used;
+        vmi.u_delete_colected_retailor(re_id);
+        delete barcode_used;
+}
+
+
+//پرداخت تولید کننده به جمع آوری کننده
+function b_pay_collector() onlymanufacture
+public payable{
+  address collector_adress=vmi.colectoradress();
+   uint cost_to_colector=(collected_product_map_pay_status[collector_adress].length)
+   *(cost_of_one_colected);
+  
+   require(  vmi.read_balancemap(vmi.manufacture())>=cost_to_colector);
+     //balance_map[manufacture]=balance_map[manufacture]-cost_to_colector;
+     vmi.updatesub_balance_map(vmi.manufacture(),cost_to_colector);
+     //balance_map[collector_adress]=balance_map[collector_adress]+cost_to_colector;
+     vmi.updateadd_balance_map(collector_adress,cost_to_colector);
+     //balance_map[collector_adress]=balance_map[collector_adress]);
+     delete collected_product_map_pay_status[collector_adress];
+}
+
+
+//پرداخت تشویقی دولت به تولید کننده
+
+function hhh_encouragement(uint encourage_one_product, bool _barcode_status) 
+onlygovernment payable public
+{
+   //پرداخت تشویقی به ازای محصولات جمع آوری شده است
+   require (_barcode_status=true);
+   uint s=0;
+     address _clc_adr=vmi.colectoradress();
+     uint leng=collected_product_map_pa_government[_clc_adr].length;
+     uint encour_cost=(leng)*(encourage_one_product);
+      s=encour_cost;
+      delete collected_product_map_pa_government[_clc_adr];
+    //require(balance_map[govenrnment]>=s);
+    require(vmi.read_balancemap(vmi.govenrnment())>=s);
+     //balance_map[vmi.manufacture()]=balance_map[manufacture]+s;
+     //balance_map[]=balance_map[govenrnment]-s;
+     vmi.updateadd_balance_map(vmi.manufacture(),s);
+     vmi.updatesub_balance_map(vmi.govenrnment(),s);
+
+}
+
+
+function i_build_difrence_barcodemap(uint [] memory uncolected_barcode)
+ onlygovernment public{
+      difrence_barcode_map[i_of_difrence_barcode_map]=uncolected_barcode;
+      i_of_difrence_barcode_map=i_of_difrence_barcode_map+1;
+}
+
+function ii_penalty_uncollected(uint penalty_uncolected_product) 
+onlygovernment public payable {
+  uint [] memory diference_product_uncolected =difrence_barcode_map[Last_number_paid];
+  uint penalty_manuf=diference_product_uncolected.length*penalty_uncolected_product;
+   Last_number_paid= Last_number_paid+1;
+   require(vmi.balance_map(vmi.manufacture())>=penalty_manuf);
+   //edit interaction contract
+    //uint y=vmi.balance_map(vmi.govenrnment())+penalty_manuf;
+    vmi.updateadd_balance_map(vmi.govenrnment(),penalty_manuf);
+   // uint z=vmi.balance_map(vmi.manufacture())-penalty_manuf;
+    vmi.updateadd_balance_map(vmi.manufacture(),penalty_manuf);
+
+  }
+
+modifier  onlymanufacture(){ //only manufacture can do it
+        require(manufacture== msg.sender); 
+        _;
+    }
+modifier  onlycollector() { //only collector can do it
+   require(msg.sender==colectoradress);
+_;
+}
+
+modifier  onlygovernment(){ //only government can do it
+        require(govenrnment== msg.sender); 
+        _;
+    }   
+
+}
+
+//قراداد مربوط به محاسبات زمانی
+contract DateTime {
+        /*
+         *  Date and Time utilities for ethereum contracts
+         *
+         */
+        struct _DateTime {
+                uint16 year;
+                uint8 month;
+                uint8 day;
+                uint8 hour;
+                uint8 minute;
+                uint8 second;
+                uint8 weekday;
+        }
+
+        uint constant DAY_IN_SECONDS = 86400;
+        uint constant YEAR_IN_SECONDS = 31536000;
+        uint constant LEAP_YEAR_IN_SECONDS = 31622400;
+
+        uint constant HOUR_IN_SECONDS = 3600;
+        uint constant MINUTE_IN_SECONDS = 60;
+
+        uint16 constant ORIGIN_YEAR = 1970;
+
+        function isLeapYear(uint16 year) public pure returns (bool) {
+                if (year % 4 != 0) {
+                        return false;
+                }
+                if (year % 100 != 0) {
+                        return true;
+                }
+                if (year % 400 != 0) {
+                        return false;
+                }
+                return true;
+        }
+
+        function leapYearsBefore(uint year) public pure returns (uint) {
+                year -= 1;
+                return year / 4 - year / 100 + year / 400;
+        }
+
+
+
+
+
+        function toTimestamp(uint16 year, uint8 month, uint8 day, uint8 hour, uint8 minute, uint8 second) public pure returns (uint timestamp) {
+                uint16 i;
+
+                // Year
+                for (i = ORIGIN_YEAR; i < year; i++) {
+                        if (isLeapYear(i)) {
+                                timestamp += LEAP_YEAR_IN_SECONDS;
+                        }
+                        else {
+                                timestamp += YEAR_IN_SECONDS;
+                        }
+                }
+
+                // Month
+                uint8[12] memory monthDayCounts;
+                monthDayCounts[0] = 31;
+                if (isLeapYear(year)) {
+                        monthDayCounts[1] = 29;
+                }
+                else {
+                        monthDayCounts[1] = 28;
+                }
+                monthDayCounts[2] = 31;
+                monthDayCounts[3] = 30;
+                monthDayCounts[4] = 31;
+                monthDayCounts[5] = 30;
+                monthDayCounts[6] = 31;
+                monthDayCounts[7] = 31;
+                monthDayCounts[8] = 30;
+                monthDayCounts[9] = 31;
+                monthDayCounts[10] = 30;
+                monthDayCounts[11] = 31;
+
+                for (i = 1; i < month; i++) {
+                        timestamp += DAY_IN_SECONDS * monthDayCounts[i - 1];
+                }
+
+                // Day
+                timestamp += DAY_IN_SECONDS * (day - 1);
+
+                // Hour
+                timestamp += HOUR_IN_SECONDS * (hour);
+
+                // Minute
+                timestamp += MINUTE_IN_SECONDS * (minute);
+
+                // Second
+                timestamp += second;
+
+                return timestamp;
+        }
+}
+
+
